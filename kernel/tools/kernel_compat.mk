@@ -276,3 +276,9 @@ ifeq ($(shell grep -q "security_add_hooks" $(srctree)/include/linux/lsm_hooks.h;
 $(info -- $(REPO_NAME)/compat: found security_add_hooks)
 ccflags-y += -DKSU_COMPAT_HAS_LIST_OF_LSM_HOOKS
 endif
+
+# https://github.com/torvalds/linux/commit/7fe33e9f662c0a2f5110be4afff0a24e0c123540
+ifeq ($(shell grep -q "__NR_compat32_syscalls" $(srctree)/arch/arm64/kernel/sys32.c; echo $$?),0)
+$(info -- $(REPO_NAME)/compat: found __NR_compat32_syscalls)
+ccflags-y += -DKSU_COMPAT_HAS_NR_COMPAT32_SYSCALLS
+endif

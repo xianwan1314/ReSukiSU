@@ -3,6 +3,7 @@
 #include "linux/jump_label.h"
 #include "linux/printk.h"
 #include "selinux/selinux.h"
+#include <linux/compat.h>
 #include <asm/syscall.h>
 #include <linux/ptrace.h>
 #include <linux/static_key.h>
@@ -56,15 +57,33 @@ long __nocfi ksu_hook_newfstatat(int orig_nr, const struct pt_regs *regs)
     int *flags;
 
     // GKI2 always have static_key
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+    if (!static_branch_unlikely(&ksu_su_compat_enabled)) {
+        if (is_compat_task()) {
+            return ksu_compat_syscall_table[orig_nr](regs);
+        } else {
+            return ksu_syscall_table[orig_nr](regs);
+        }
+    }
+#else
     if (!static_branch_unlikely(&ksu_su_compat_enabled))
         return ksu_syscall_table[orig_nr](regs);
+#endif
 
     dfd = (int *)&PT_REGS_PARM1(regs);
     filename_user = (const char __user **)&PT_REGS_PARM2(regs);
     flags = (int *)&PT_REGS_SYSCALL_PARM4(regs);
     ksu_handle_stat(dfd, filename_user, flags);
 
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+    if (is_compat_task()) {
+        return ksu_compat_syscall_table[orig_nr](regs);
+    } else {
+        return ksu_syscall_table[orig_nr](regs);
+    }
+#else
     return ksu_syscall_table[orig_nr](regs);
+#endif
 }
 
 long __nocfi ksu_hook_faccessat(int orig_nr, const struct pt_regs *regs)
@@ -74,15 +93,33 @@ long __nocfi ksu_hook_faccessat(int orig_nr, const struct pt_regs *regs)
     int *mode;
 
     // GKI2 always have static_key
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+    if (!static_branch_unlikely(&ksu_su_compat_enabled)) {
+        if (is_compat_task()) {
+            return ksu_compat_syscall_table[orig_nr](regs);
+        } else {
+            return ksu_syscall_table[orig_nr](regs);
+        }
+    }
+#else
     if (!static_branch_unlikely(&ksu_su_compat_enabled))
         return ksu_syscall_table[orig_nr](regs);
+#endif
 
     dfd = (int *)&PT_REGS_PARM1(regs);
     filename_user = (const char __user **)&PT_REGS_PARM2(regs);
     mode = (int *)&PT_REGS_PARM3(regs);
     ksu_handle_faccessat(dfd, filename_user, mode, NULL);
 
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+    if (is_compat_task()) {
+        return ksu_compat_syscall_table[orig_nr](regs);
+    } else {
+        return ksu_syscall_table[orig_nr](regs);
+    }
+#else
     return ksu_syscall_table[orig_nr](regs);
+#endif
 }
 
 // there are for tracepoint syscall redirect hook
@@ -101,7 +138,7 @@ long __nocfi ksu_hook_execve(int orig_nr, const struct pt_regs *regs)
     if (static_branch_unlikely(&ksud_execve_key))
         ksu_execve_hook_ksud(regs);
 
-    if (current_euid().val == 0)
+    if (ksu_get_uid_t(current_euid()) == 0)
         pending_root_execve = ksu_sulog_capture_root_execve_tracepoint(*filename_user, argv_user, GFP_KERNEL);
 
     if (current->pid != 1 && current_is_init) {
@@ -116,7 +153,15 @@ long __nocfi ksu_hook_execve(int orig_nr, const struct pt_regs *regs)
         return ret;
     }
 
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+    if (is_compat_task()) {
+        ret = ksu_compat_syscall_table[orig_nr](regs);
+    } else {
+        ret = ksu_syscall_table[orig_nr](regs);
+    }
+#else
     ret = ksu_syscall_table[orig_nr](regs);
+#endif
     ksu_sulog_emit_pending(pending_root_execve, ret, GFP_KERNEL);
     return ret;
 }
@@ -124,7 +169,17 @@ long __nocfi ksu_hook_execve(int orig_nr, const struct pt_regs *regs)
 long __nocfi ksu_hook_setresuid(int orig_nr, const struct pt_regs *regs)
 {
     uid_t old_uid = ksu_get_uid_t(current_uid());
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+    long ret = 0;
+
+    if (is_compat_task()) {
+        ret = ksu_compat_syscall_table[orig_nr](regs);
+    } else {
+        ret = ksu_syscall_table[orig_nr](regs);
+    }
+#else
     long ret = ksu_syscall_table[orig_nr](regs);
+#endif
 
     if (ret < 0)
         return ret;

@@ -182,7 +182,15 @@ int ksu_handle_execve_sucompat_tp_internal(const char __user **filename_user, in
         goto do_orig_execve;
     }
 
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+    if (is_compat_task()) {
+        ret = ksu_compat_syscall_table[orig_nr](regs);
+    } else {
+        ret = ksu_syscall_table[orig_nr](regs);
+    }
+#else
     ret = ksu_syscall_table[orig_nr](regs);
+#endif
     if (ret < 0) {
         pr_err("failed to execve ksud as su: %ld, fallback to sh\n", ret);
         ksu_sulog_emit_pending(pending_sucompat, ret, GFP_KERNEL);
@@ -193,7 +201,15 @@ int ksu_handle_execve_sucompat_tp_internal(const char __user **filename_user, in
     }
 
 do_orig_execve:
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+    if (is_compat_task()) {
+        return ksu_compat_syscall_table[orig_nr](regs);
+    } else {
+        return ksu_syscall_table[orig_nr](regs);
+    }
+#else
     return ksu_syscall_table[orig_nr](regs);
+#endif
 }
 #endif
 
