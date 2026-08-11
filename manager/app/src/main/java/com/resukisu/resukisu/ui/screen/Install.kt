@@ -60,6 +60,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,6 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.resukisu.resukisu.R
 import com.resukisu.resukisu.getKernelVersion
+import com.resukisu.resukisu.ksuApp
 import com.resukisu.resukisu.ui.component.DialogHandle
 import com.resukisu.resukisu.ui.component.rememberConfirmDialog
 import com.resukisu.resukisu.ui.component.rememberCustomDialog
@@ -92,6 +94,9 @@ import com.resukisu.resukisu.ui.theme.blurSource
 import com.resukisu.resukisu.ui.theme.getCardColors
 import com.resukisu.resukisu.ui.theme.getCardElevation
 import com.resukisu.resukisu.ui.theme.renderBackgroundBlur
+import com.resukisu.resukisu.ui.util.classifyBootImage
+import com.resukisu.resukisu.ui.util.isSupportedBootImageKind
+import com.resukisu.resukisu.ui.util.isVendorBootTarget
 import com.resukisu.resukisu.ui.util.LkmSelection
 import com.resukisu.resukisu.ui.util.getAvailablePartitions
 import com.resukisu.resukisu.ui.util.getCurrentKmi
@@ -99,7 +104,10 @@ import com.resukisu.resukisu.ui.util.getDefaultPartition
 import com.resukisu.resukisu.ui.util.getSlotSuffix
 import com.resukisu.resukisu.ui.util.getSupportedKmis
 import com.resukisu.resukisu.ui.util.isAbDevice
+import com.resukisu.resukisu.ui.util.orderSupportedKmis
 import com.resukisu.resukisu.ui.util.rootAvailable
+import com.resukisu.resukisu.ui.util.resolvePreferredKmi
+import kotlinx.coroutines.launch
 
 /**
  * @author ShirkNeko
@@ -117,12 +125,14 @@ fun InstallScreen(
     var showRebootDialog by remember { mutableStateOf(false) }
     var showSlotSelectionDialog by remember { mutableStateOf(false) }
     var tempKernelUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedBootImageKind by remember { mutableStateOf<String?>(null) }
 
     val kernelVersion = getKernelVersion()
     val isGKI = kernelVersion.isGKI()
     val isAbDevice = produceState(initialValue = false) {
         value = isAbDevice()
     }.value
+    val scope = rememberCoroutineScope()
     val summary = stringResource(R.string.horizon_kernel_summary)
 
     // 处理预选的内核文件
@@ -190,7 +200,8 @@ fun InstallScreen(
                         boot = if (method is InstallMethod.SelectFile) method.uri else null,
                         lkm = lkmSelection,
                         ota = isOta,
-                        partition = partitionSelection
+                        partition = partitionSelection,
+                        bootImageKind = selectedBootImageKind
                     )
                     navigator.push(Route.Flash(flashIt))
                 }
@@ -218,18 +229,77 @@ fun InstallScreen(
         value = getCurrentKmi()
     }
 
-    val selectKmiDialog = rememberSelectKmiDialog { kmi ->
+    val preferredKmi = currentKmi.takeIf { it.isNotBlank() }
+
+    val selectKmiDialog = rememberSelectKmiDialog(
+        preferredKmi = preferredKmi,
+        currentKmi = currentKmi
+    ) { kmi ->
         kmi?.let {
             lkmSelection = LkmSelection.KmiString(it)
             onInstall()
         }
     }
 
-    val onClickNext = {
-        if (isGKI && lkmSelection == LkmSelection.KmiNone && currentKmi.isBlank() && installMethod !is InstallMethod.HorizonKernel) {
+    val continueInstall: () -> Unit = {
+        val isLkmSelected = lkmSelection != LkmSelection.KmiNone
+        val isKmiUnknown = currentKmi.isBlank()
+        val isSelectFileMode = installMethod is InstallMethod.SelectFile
+        val selectedPartition = partitionsState.getOrNull(partitionSelectionIndex)
+        val isVendorBoot = isVendorBootTarget(selectedBootImageKind, selectedPartition)
+        if (
+            isGKI &&
+            !isLkmSelected &&
+            (isKmiUnknown || isSelectFileMode) &&
+            !isVendorBoot &&
+            installMethod !is InstallMethod.HorizonKernel
+        ) {
             selectKmiDialog.show()
         } else {
             onInstall()
+        }
+    }
+
+    val onClickNext: () -> Unit = {
+        when {
+            installMethod is InstallMethod.HorizonKernel -> onInstall()
+            installMethod is InstallMethod.SelectFile && selectedBootImageKind == null -> {
+                scope.launch {
+                    selectedBootImageKind = classifyBootImage((installMethod as? InstallMethod.SelectFile)?.uri)
+                    if (!isSupportedBootImageKind(selectedBootImageKind)) {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.install_only_support_boot_family_image),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        continueInstall()
+                    }
+                }
+            }
+            installMethod is InstallMethod.SelectFile -> {
+                if (!isSupportedBootImageKind(selectedBootImageKind)) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.install_only_support_boot_family_image),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    continueInstall()
+                }
+            }
+            else -> {
+                val selectedPartition = partitionsState.getOrNull(partitionSelectionIndex)
+                if (!isSupportedBootImageKind(selectedPartition)) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.install_only_support_boot_family_partition),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    continueInstall()
+                }
+            }
         }
     }
 
@@ -292,7 +362,8 @@ fun InstallScreen(
                 SelectInstallMethod(
                     isGKI = isGKI,
                     onSelected = { method ->
-                        if (method is InstallMethod.HorizonKernel && method.uri != null) {
+                        selectedBootImageKind = null
+                    if (method is InstallMethod.HorizonKernel && method.uri != null) {
                             if (isAbDevice) {
                                 tempKernelUri = method.uri
                                 showSlotSelectionDialog = true
@@ -840,10 +911,32 @@ private fun SelectInstallMethod(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun rememberSelectKmiDialog(onSelected: (String?) -> Unit): DialogHandle {
+fun rememberSelectKmiDialog(
+    preferredKmi: String? = null,
+    currentKmi: String = "",
+    onSelected: (String?) -> Unit
+): DialogHandle {
     return rememberCustomDialog { dismiss ->
-        val supportedKmi by produceState(initialValue = emptyList()) {
+        val supportedKmis by produceState(initialValue = emptyList()) {
             value = getSupportedKmis()
+        }
+        val orderedKmis = remember(supportedKmis) {
+            orderSupportedKmis(supportedKmis)
+        }
+        val preferred = remember(preferredKmi, currentKmi, orderedKmis) {
+            resolvePreferredKmi(preferredKmi, currentKmi, orderedKmis)
+        }
+        val selectedIndex = remember(orderedKmis, preferred) {
+            orderedKmis.indexOf(preferred).takeIf { it >= 0 } ?: orderedKmis.indices.firstOrNull() ?: -1
+        }
+        val itemDescriptions = remember(orderedKmis, preferred) {
+            orderedKmis.map { kmi ->
+                if (kmi == preferred) {
+                    ksuApp.getString(R.string.current_device_kmi)
+                } else {
+                    null
+                }
+            }
         }
 
         MaterialTheme(
@@ -854,11 +947,12 @@ fun rememberSelectKmiDialog(onSelected: (String?) -> Unit): DialogHandle {
             SettingsChooseDialog(
                 show = true,
                 title = stringResource(R.string.select_kmi),
-                items = supportedKmi,
-                selectedIndex = -1,
+                items = orderedKmis,
+                itemDescriptions = itemDescriptions,
+                selectedIndex = selectedIndex,
                 onDismiss = dismiss,
                 onSelectedIndexChange = { index ->
-                    onSelected(supportedKmi.getOrNull(index))
+                    onSelected(orderedKmis.getOrNull(index))
                 }
             )
         }

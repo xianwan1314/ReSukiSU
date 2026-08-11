@@ -174,6 +174,9 @@
     <string name="install_upload_lkm_file">使用本地 LKM 文件</string>
     <string name="install_only_support_ko_file">仅支持选择 .ko 文件</string>
     <string name="select_file_tip">建议选择 %1$s 分区镜像</string>
+    <string name="install_only_support_boot_family_image">仅支持修补 boot.img、init_boot.img 或 vendor_boot.img。</string>
+    <string name="install_only_support_boot_family_partition">仅支持修补 boot、init_boot 或 vendor_boot 分区。</string>
+    <string name="current_device_kmi">当前设备的 KMI</string>
     <string name="select_kmi">选择 KMI</string>
     <string name="settings_uninstall">卸载</string>
     <string name="settings_uninstall_temporary">临时卸载</string>
@@ -579,4 +582,5 @@
     <string name="susfs_kstat_field_blksize">blksize</string>
     <string name="susfs_redirect_entry_description">%1$s · %2$s</string>
     <string name="susfs_backup_default_filename">susfs_backup.json</string>
+    <string name="vendor_boot_rmvr_lkm_not_used">vendor_boot 清理只会移除 vr/vklp，不会安装所选的 LKM。</string>
 </resources>

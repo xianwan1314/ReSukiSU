@@ -5,8 +5,10 @@ import android.net.Uri
 import android.os.Environment
 import android.os.Parcelable
 import android.os.SystemClock
+import android.provider.OpenableColumns
 import android.system.Os
 import android.util.Log
+import com.resukisu.resukisu.R
 import com.resukisu.resukisu.BuildConfig
 import com.resukisu.resukisu.Natives
 import com.resukisu.resukisu.ksuApp
@@ -28,6 +30,34 @@ import java.util.Properties
  * @date 2023/1/1.
  */
 private const val TAG = "KsuCli"
+
+private data class TrustedManagerSignature(
+    val size: Int,
+    val hash: String
+)
+
+private val trustedManagerSignatures = setOf(
+    TrustedManagerSignature(
+        size = 0x377,
+        hash = "d3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64"
+    ),
+    TrustedManagerSignature(
+        size = 0x36f,
+        hash = "11f9a7233ba8d7d9d7c51255f35f377c94c7b74110144d46db4d1353b0155ae8"
+    )
+)
+
+private fun parseManagerSignature(raw: String): TrustedManagerSignature? {
+    val normalized = raw.trim()
+    if (normalized.isBlank()) return null
+
+    val sizePart = normalized.substringAfter("size:", "").substringBefore(",").trim()
+    val hashPart = normalized.substringAfter("hash:", "").trim().lowercase()
+    if (sizePart.isBlank() || hashPart.isBlank()) return null
+
+    val size = sizePart.removePrefix("0x").toIntOrNull(16) ?: return null
+    return TrustedManagerSignature(size = size, hash = hashPart)
+}
 
 private fun getKsuDaemonPath(): String {
     return ksuApp.applicationInfo.nativeLibraryDir + File.separator + "libksud.so"
@@ -159,8 +189,7 @@ suspend fun isOfficialSignature(): Boolean = withContext(Dispatchers.IO) {
     val out = shell.newJob()
         .add("${getKsuDaemonPath()} debug get-sign ${ksuApp.packageResourcePath}")
         .to(ArrayList<String>(), null).exec().out
-    out.firstOrNull()?.trim()
-        .orEmpty() == "size: 0x377, hash: d3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64"
+    parseManagerSignature(out.firstOrNull().orEmpty()) in trustedManagerSignatures
 }
 
 suspend fun getFeatureStatus(feature: String): String = withContext(Dispatchers.IO) {
@@ -356,6 +385,7 @@ fun installBoot(
     lkm: LkmSelection,
     ota: Boolean,
     partition: String?,
+    bootImageKind: String?,
     onFinish: (Boolean, Int) -> Unit,
     onStdout: (String) -> Unit,
     onStderr: (String) -> Unit,
@@ -373,7 +403,16 @@ fun installBoot(
         }
     }
 
-    var cmd = "boot-patch"
+    val useVendorBootRmvr = isVendorBootTarget(bootImageKind, partition)
+    if (useVendorBootRmvr && lkm != LkmSelection.KmiNone) {
+        onStdout(ksuApp.getString(R.string.vendor_boot_rmvr_lkm_not_used))
+    }
+
+    var cmd = if (useVendorBootRmvr) {
+        VENDOR_BOOT_RMVR_COMMAND
+    } else {
+        BOOT_PATCH_COMMAND
+    }
 
     cmd += if (bootFile == null) {
         // no boot.img, use -f to flash
@@ -387,25 +426,27 @@ fun installBoot(
     }
 
     var lkmFile: File? = null
-    when (lkm) {
-        is LkmSelection.LkmUri -> {
-            lkmFile = with(resolver.openInputStream(lkm.uri)) {
-                val file = File(ksuApp.cacheDir, "kernelsu-tmp-lkm.ko")
-                file.outputStream().use { output ->
-                    this?.copyTo(output)
+    if (!useVendorBootRmvr) {
+        when (lkm) {
+            is LkmSelection.LkmUri -> {
+                lkmFile = with(resolver.openInputStream(lkm.uri)) {
+                    val file = File(ksuApp.cacheDir, "kernelsu-tmp-lkm.ko")
+                    file.outputStream().use { output ->
+                        this?.copyTo(output)
+                    }
+
+                    file
                 }
-
-                file
+                cmd += " -m ${lkmFile.absolutePath}"
             }
-            cmd += " -m ${lkmFile.absolutePath}"
-        }
 
-        is LkmSelection.KmiString -> {
-            cmd += " --kmi ${lkm.value}"
-        }
+            is LkmSelection.KmiString -> {
+                cmd += " --kmi ${lkm.value}"
+            }
 
-        LkmSelection.KmiNone -> {
-            // do nothing
+            LkmSelection.KmiNone -> {
+                // do nothing
+            }
         }
     }
 
@@ -413,23 +454,40 @@ fun installBoot(
     if (bootFile != null) {
         val downloadsDir =
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val outputKind = resolveBootImageKindForOutput(bootImageKind, partition)
+        val outputName = if (outputKind == null) {
+            "kernelsu_patched_${System.currentTimeMillis()}.img"
+        } else {
+            "kernelsu_patched_${outputKind}_${System.currentTimeMillis()}.img"
+        }
         cmd += " -o $downloadsDir"
+        cmd += " --out-name $outputName"
     }
 
     partition?.let { part ->
         cmd += " --partition $part"
     }
 
-    val result = flashWithIO("${getKsuDaemonPath()} $cmd", onStdout, onStderr)
+    var rmvrChanged = false
+    val stdout: (String) -> Unit = { line ->
+        if (useVendorBootRmvr && line.contains("KERNELSU_RMVR_CHANGED=1")) {
+            rmvrChanged = true
+        }
+        onStdout(line)
+    }
+    val result = flashWithIO("${getKsuDaemonPath()} $cmd", stdout, onStderr)
     Log.i("KernelSU", "install boot result: ${result.isSuccess}")
 
     bootFile?.delete()
     lkmFile?.delete()
 
     // if boot uri is empty, it is direct install, when success, we should show reboot button
-    onFinish(bootUri == null && result.isSuccess, result.code)
+    onFinish(
+        bootUri == null && result.isSuccess && (!useVendorBootRmvr || !ota && rmvrChanged),
+        result.code
+    )
 
-    if (bootUri == null && result.isSuccess) {
+    if (bootUri == null && result.isSuccess && !useVendorBootRmvr) {
         install()
     }
 
@@ -468,6 +526,44 @@ suspend fun getSupportedKmis(): List<String> = withContext(Dispatchers.IO) {
     out.filter { it.isNotBlank() }.map { it.trim() }
 }
 
+private fun getUriFileName(uri: Uri): String? {
+    return runCatching {
+        ksuApp.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (idx != -1 && cursor.moveToFirst()) {
+                cursor.getString(idx)
+            } else {
+                null
+            }
+        }
+    }.getOrNull() ?: uri.lastPathSegment
+}
+
+suspend fun classifyBootImage(uri: Uri?): String = withContext(Dispatchers.IO) {
+    if (uri == null) return@withContext BOOT_IMAGE_KIND_UNKNOWN
+    detectBootImageKindByName(getUriFileName(uri))?.let { return@withContext it }
+
+    val resolver = ksuApp.contentResolver
+    val image = File(ksuApp.cacheDir, "boot-classify.img")
+    try {
+        resolver.openInputStream(uri)?.use { input ->
+            image.outputStream().use { output -> input.copyTo(output) }
+        } ?: return@withContext BOOT_IMAGE_KIND_UNKNOWN
+
+        val shell = getRootShell()
+        val cmd = "boot-info classify-image ${image.absolutePath}"
+        ShellUtils.fastCmd(shell, "${getKsuDaemonPath()} $cmd").trim().ifBlank { BOOT_IMAGE_KIND_UNKNOWN }
+    } finally {
+        image.delete()
+    }
+}
+
 suspend fun isAbDevice(): Boolean = withContext(Dispatchers.IO) {
     val shell = getRootShell()
     val cmd = "boot-info is-ab-device"
@@ -480,7 +576,7 @@ suspend fun getDefaultPartition(): String = withContext(Dispatchers.IO) {
         val cmd = "boot-info default-partition"
         ShellUtils.fastCmd(shell, "${getKsuDaemonPath()} $cmd").trim()
     } else {
-        if (!Os.uname().release.contains("android12-")) "init_boot" else "boot"
+        if (!Os.uname().release.contains("android12-")) BOOT_IMAGE_KIND_INIT_BOOT else BOOT_IMAGE_KIND_BOOT
     }
 }
 

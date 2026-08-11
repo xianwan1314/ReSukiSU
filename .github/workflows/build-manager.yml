@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/build-manager.yml'
       - '.github/workflows/build-lkm.yml'
+      - '.github/workflows/build-lkm-vivo.yml'
       - '.github/workflows/ddk-lkm.yml'
       - '.github/workflows/ksud.yml'
       - 'manager/**'
@@ -46,16 +47,42 @@ jobs:
 
           echo "keystore=$(base64 -w 0 pr-key.jks)" >> $GITHUB_OUTPUT
 
+      - name: Validate production keystore metadata
+        if: github.event_name != 'pull_request'
+        env:
+          PROD_KEYSTORE: ${{ secrets.KEYSTORE }}
+          PROD_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          PROD_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          PROD_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$PROD_KEYSTORE"
+          test -n "$PROD_KEYSTORE_PASSWORD"
+          test -n "$PROD_KEY_ALIAS"
+          test -n "$PROD_KEY_PASSWORD"
+
       - name: Extract certificate hash and size
-        if: github.event_name == 'pull_request'
         id: extract
         env:
-          STORE_PASS: ${{ steps.gen.outputs.keystore_password }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_STORE_PASS: ${{ steps.gen.outputs.keystore_password }}
+          PROD_KEYSTORE: ${{ secrets.KEYSTORE }}
+          PROD_STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          PROD_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          # Export DER certificate
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            KEYSTORE_FILE=pr-key.jks
+            KEY_ALIAS=pr-key
+            STORE_PASS="$PR_STORE_PASS"
+          else
+            echo "$PROD_KEYSTORE" | base64 -d > key.jks
+            KEYSTORE_FILE=key.jks
+            KEY_ALIAS="$PROD_KEY_ALIAS"
+            STORE_PASS="$PROD_STORE_PASS"
+          fi
+
           keytool -exportcert \
-            -alias pr-key \
-            -keystore pr-key.jks \
+            -alias "$KEY_ALIAS" \
+            -keystore "$KEYSTORE_FILE" \
             -storepass "$STORE_PASS" \
             -file pr-cert.der
 
@@ -75,15 +102,23 @@ jobs:
     needs: generate-key
     uses: ./.github/workflows/build-lkm.yml
     with:
-      expected_pr_build_size: ${{ needs.generate-key.outputs.expected_size || '' }}
-      expected_pr_build_hash: ${{ needs.generate-key.outputs.expected_hash || '' }}
+      expected_size: ${{ needs.generate-key.outputs.expected_size || '' }}
+      expected_hash: ${{ needs.generate-key.outputs.expected_hash || '' }}
+    secrets: inherit
+
+  build-lkm-vivo:
+    needs: generate-key
+    uses: ./.github/workflows/build-lkm-vivo.yml
+    with:
+      expected_size: ${{ needs.generate-key.outputs.expected_size || '' }}
+      expected_hash: ${{ needs.generate-key.outputs.expected_hash || '' }}
     secrets: inherit
 
   build-ksuinit:
     uses: ./.github/workflows/ksuinit.yml
 
   build-ksud:
-    needs: [build-lkm, build-ksuinit]
+    needs: [build-lkm, build-lkm-vivo, build-ksuinit]
     strategy:
       matrix:
         include:
