@@ -13,6 +13,7 @@ import org.koin.core.context.startKoin
 class KernelSUApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        ksuApp = this
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val processName = getProcessName()
             if (processName.endsWith("MagicaService")) {

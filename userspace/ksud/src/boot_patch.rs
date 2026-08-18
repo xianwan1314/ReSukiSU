@@ -403,7 +403,7 @@ fn map_file(file: &Path) -> Result<Mmap> {
     Ok(mmap)
 }
 
-fn parse_kmi(buffer: &[u8]) -> Result<String> {
+pub fn parse_kmi(buffer: &[u8]) -> Result<String> {
     let re = Regex::new(r"(\d+\.\d+)(?:\S+)?(android\d+)").context("Failed to compile regex")?;
     buffer
         .windows(4)
@@ -516,6 +516,7 @@ pub fn classify_image(image: &Path) -> Result<String> {
             BOOT_PARTITION_BOOT.to_string()
         }
         BootImageVersion::Android(_) => BOOT_PARTITION_INIT_BOOT.to_string(),
+        BootImageVersion::RawRamdisk => BOOT_PARTITION_INIT_BOOT.to_string(),
     })
 }
 
@@ -1034,7 +1035,7 @@ pub fn patch_rmvr(args: VendorBootRmvrArgs) -> Result<()> {
             partition,
         } = args;
 
-        println!(include_str!("android/banner"));
+        println!("{}", crate::banner::print_banner());
         println!("- Mode: vendor_boot rmvr (vr.ko and vklp.ko)");
 
         #[cfg(target_os = "android")]

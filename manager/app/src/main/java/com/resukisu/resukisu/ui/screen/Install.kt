@@ -84,6 +84,7 @@ import com.resukisu.resukisu.ui.component.settings.SettingsChooseWidget
 import com.resukisu.resukisu.ui.navigation.LocalNavigator
 import com.resukisu.resukisu.ui.navigation.Route
 import com.resukisu.resukisu.ui.screen.kernelFlash.component.SlotSelectionDialog
+import com.resukisu.resukisu.ui.util.detectBootImageKindByName
 import com.resukisu.resukisu.ui.theme.CardConfig
 import com.resukisu.resukisu.ui.theme.ThemeConfig
 import com.resukisu.resukisu.ui.theme.blurEffect
@@ -116,6 +117,7 @@ fun InstallScreen(
     var lkmSelection by remember { mutableStateOf<LkmSelection>(LkmSelection.KmiNone) }
     var showSlotSelectionDialog by remember { mutableStateOf(false) }
     var tempKernelUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedBootImageKind by remember { mutableStateOf<String?>(null) }
 
     val isGKI = environment.isGki
     val isAbDevice = environment.isAbDevice
@@ -301,6 +303,12 @@ fun InstallScreen(
                         isAbDevice = environment.isAbDevice,
                         defaultPartitionName = environment.defaultPartition,
                         onSelected = { method ->
+                            selectedBootImageKind = when (method) {
+                                is InstallMethod.SelectFile -> detectBootImageKindByName(
+                                    method.uri?.lastPathSegment
+                                )
+                                else -> null
+                            }
                             if (method is InstallMethod.HorizonKernel && method.uri != null) {
                                 if (isAbDevice) {
                                     tempKernelUri = method.uri

@@ -32,6 +32,34 @@ import java.util.Properties
 class KsuCliRepository(context: Context) {
     private companion object {
         const val TAG = "KsuCli"
+
+        data class TrustedManagerSignature(
+            val size: Int,
+            val hash: String
+        )
+
+        val trustedManagerSignatures = setOf(
+            TrustedManagerSignature(
+                size = 0x377,
+                hash = "d3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64"
+            ),
+            TrustedManagerSignature(
+                size = 0x36f,
+                hash = "11f9a7233ba8d7d9d7c51255f35f377c94c7b74110144d46db4d1353b0155ae8"
+            )
+        )
+
+        fun parseManagerSignature(raw: String): TrustedManagerSignature? {
+            val normalized = raw.trim()
+            if (normalized.isBlank()) return null
+
+            val sizePart = normalized.substringAfter("size:", "").substringBefore(",").trim()
+            val hashPart = normalized.substringAfter("hash:", "").trim().lowercase()
+            if (sizePart.isBlank() || hashPart.isBlank()) return null
+
+            val size = sizePart.removePrefix("0x").toIntOrNull(16) ?: return null
+            return TrustedManagerSignature(size = size, hash = hashPart)
+        }
     }
 
     private val nativeLibraryDir = context.applicationInfo.nativeLibraryDir
@@ -165,8 +193,7 @@ class KsuCliRepository(context: Context) {
             val out = shell.newJob()
                 .add("${getKsuDaemonPath()} debug get-sign ${shellQuote(packageResourcePath)}")
                 .to(ArrayList<String>(), null).exec().out
-            out.firstOrNull()?.trim()
-                .orEmpty() == "size: 0x377, hash: d3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64"
+            parseManagerSignature(out.firstOrNull().orEmpty()) in trustedManagerSignatures
         }
 
     suspend fun getFeatureStatus(feature: String): String = withContext(Dispatchers.IO) {

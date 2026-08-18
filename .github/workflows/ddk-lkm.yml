@@ -193,7 +193,11 @@ jobs:
         mkdir -p $OUT_DIR
 
         # Copy with KMI-specific naming
-        OUTPUT_NAME="${{ inputs.kmi }}_kernelsu.ko"
+        SUFFIX=""
+        if [ "${{ inputs.vivo }}" = "true" ]; then
+          SUFFIX="_vivo"
+        fi
+        OUTPUT_NAME="${{ inputs.kmi }}${SUFFIX}_kernelsu.ko"
         cp kernelsu.ko "$OUT_DIR/$OUTPUT_NAME"
 
         echo "Copied to: $OUT_DIR/$OUTPUT_NAME"
@@ -205,5 +209,5 @@ jobs:
     - name: Upload x64 kernelsu.ko artifact
       uses: actions/upload-artifact@v7
       with:
-        name: x86_64-${{ inputs.kmi }}-lkm
-        path: /github/workspace/out/x86_64/${{ inputs.kmi }}_kernelsu.ko
+        name: x86_64-${{ inputs.kmi }}${{ inputs.vivo && '-vivo' || '' }}-lkm
+        path: /github/workspace/out/x86_64/${{ inputs.kmi }}${{ inputs.vivo && '_vivo' || '' }}_kernelsu.ko
