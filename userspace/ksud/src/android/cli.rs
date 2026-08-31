@@ -467,7 +467,7 @@ enum Profile {
 enum Feature {
     /// Get feature value and support status
     Get {
-        /// Feature ID or name (su_compat, kernel_umount, sulog, adb_root, selinux_hide)
+        /// Feature ID or name (su_compat, kernel_umount, sulog, adb_root, selinux_hide, webview_zygote_umount)
         id: String,
         /// Read from config file
         #[arg(long, default_value_t = false)]
@@ -487,7 +487,7 @@ enum Feature {
 
     /// Check feature status (supported/unsupported/managed)
     Check {
-        /// Feature ID or name (su_compat, kernel_umount, sulog, adb_root, selinux_hide)
+        /// Feature ID or name (su_compat, kernel_umount, sulog, adb_root, selinux_hide, webview_zygote_umount)
         id: String,
     },
 
@@ -580,7 +580,7 @@ pub fn run() -> Result<()> {
 
     // the kernel executes su with argv[0] = "su" and replace it with us
     let arg0 = std::env::args().next().unwrap_or_default();
-    if arg0 == "su" || arg0 == "/system/bin/su" {
+    if arg0 == "su" || arg0.ends_with("/su") {
         return su::root_shell();
     }
 

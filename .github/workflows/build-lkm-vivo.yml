@@ -29,6 +29,7 @@ jobs:
     uses: ./.github/workflows/ddk-lkm.yml
     with:
       kmi: ${{ matrix.kmi }}
+      arch: arm64
       ddk_release: '20260313'
       vivo: true
       expected_size: ${{ inputs.expected_size || '' }}

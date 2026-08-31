@@ -25,6 +25,7 @@ memmap2 = "0.9.10"
 bitflags = "2.11.0"
 base16ct = { version = "1.0.0", features = ["alloc"] }
 figlet-rs = "1.0.0"
+memchr = "2.8.3"
 
 [target.'cfg(target_os = "android")'.dependencies]
 rustix = { version = "=1.1.4", default-features = false, features = [
@@ -34,17 +35,11 @@ rustix = { version = "=1.1.4", default-features = false, features = [
     "system",
     "stdio",
 ] }
-android-properties = { version = "0.2", features = ["bionic-deprecated"] }
 android_logger = { version = "0.15", default-features = false }
 zip = { version = "8", features = [
     "deflate",
     "deflate64",
     "time",
-    "lzma",
-    "xz",
-], default-features = false }
-zip-extensions = { version = "0.14", features = [
-    "deflate",
     "lzma",
     "xz",
 ], default-features = false }

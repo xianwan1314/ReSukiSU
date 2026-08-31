@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="MissingTranslation">
     <string name="app_name" translatable="false">ReSukiSU</string>
     <string name="home">Home</string>
     <string name="learn_more">Learn more</string>
@@ -229,6 +230,8 @@
     <string name="settings_sucompat_summary">Allow root access via /system/bin/su, in new processes.</string>
     <string name="settings_kernel_umount">Module unmounting</string>
     <string name="settings_kernel_umount_summary">Unmount modules from kernel in App Profile</string>
+    <string name="settings_webview_zygote_umount">Unmount for WebView</string>
+    <string name="settings_webview_zygote_umount_summary">Prevent information leaks from WebView process but may break modules. Reboot to apply</string>
     <string name="feature_status_unsupported_summary">Kernel does not support this feature</string>
     <string name="settings_mode_disable_until_reboot">Disable until Reboot</string>
     <string name="settings_mode_disable_always">Always disable</string>
@@ -237,6 +240,8 @@
     <string name="feature_status_managed_summary">This feature is managed by a module</string>
     <string name="settings_mode_default">Default</string>
     <string name="theme_settings">Theme settings</string>
+    <string name="settings_custom_monospace_font">Use built-in monospace font</string>
+    <string name="settings_custom_monospace_font_summary">Use built-in JetBrains Mono font for log display to avoid system monospace issues</string>
     <string name="simple_mode">Simplicity mode</string>
     <string name="simple_mode_summary">Hides unnecessary cards when turned on</string>
     <string name="theme_mode">Theme</string>
@@ -450,9 +455,9 @@
     <string name="susfs_status_variant">Variant</string>
     <string name="susfs_status_enabled_features">Enabled Features</string>
     <string name="susfs_status_no_data">No data</string>
-    <string name="susfs_standard_config_enabled">Persisted configuration</string>
-    <string name="susfs_standard_config_enabled_desc">Automatically apply the saved SUSFS configuration during boot.</string>
-    <string name="susfs_management_disabled_warning">Built-in SUSFS management in Manager is disabled.</string>
+    <string name="susfs_enable_config">SUSFS manager</string>
+    <string name="susfs_enable_config_summary">Enable built-in SUSFS manager. May conflict with third-party modules.</string>
+    <string name="susfs_config_disable_warning">Built-in SUSFS manager is disabled. Enable it or install a third-party module to use SUSFS features.</string>
     <string name="susfs_standard_logging">Logging</string>
     <string name="susfs_standard_logging_desc">Enables SUSFS kernel log. Enable it before reporting bugs related to SUSFS.</string>
     <string name="susfs_standard_avc_log_spoofing">AVC Log Spoofing</string>
