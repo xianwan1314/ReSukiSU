@@ -83,15 +83,21 @@ pub fn run(package_name: &String, kmi: Option<String>, allow_shell: bool) -> Res
         } else {
             cstr!("")
         };
-        ksuinit::load_module_with_named_vermagic_fallback(
-            &ko_data,
-            &ko_name,
-            vivo_ko_data
-                .as_deref()
-                .map(|buffer| (buffer, vivo_ko_name.as_str())),
-            params,
-        )
-        .context("Failed to load kernelsu.ko")?;
+        if let Err(primary_error) = ksuinit::load_module(&ko_data, params)
+            .with_context(|| format!("Failed to load {ko_name}"))
+        {
+            if let Some(vivo_ko_data) = vivo_ko_data.as_deref() {
+                warn!(
+                    "Primary module {} failed: {:#}; trying vivo fallback {}",
+                    ko_name, primary_error, vivo_ko_name
+                );
+                ksuinit::load_module(vivo_ko_data, params)
+                    .with_context(|| format!("Failed to load vivo fallback {vivo_ko_name}"))?;
+                info!("Vivo fallback module {} loaded successfully", vivo_ko_name);
+            } else {
+                return Err(primary_error);
+            }
+        }
         info!("KernelSU module load completed for KMI {kmi}");
         dump_process_info("after load_module");
     }

@@ -32,7 +32,6 @@ struct sdesc {
 };
 
 static apk_sign_key_t apk_sign_keys[] = {
-    { EXPECTED_SIZE_RESUKISU, EXPECTED_HASH_RESUKISU }, /* ReSukiSU/ReSukiSU */
     { EXPECTED_SIZE_VIVO_PATCH, EXPECTED_HASH_VIVO_PATCH }, /* vivo-patch */
     { EXPECTED_SIZE_BAKASU, EXPECTED_HASH_BAKASU }, /* Baka-SU/BakaSU */
 #ifdef CONFIG_KSU_MULTI_MANAGER_SUPPORT

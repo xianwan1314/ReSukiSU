@@ -45,7 +45,7 @@ fn valid_block_modules(modules: &str) -> bool {
 #[cfg(target_os = "android")]
 mod android {
     use android_bootimg::cpio::{Cpio, CpioEntry};
-    use anyhow::{Context, anyhow, bail, ensure};
+    use anyhow::{Context, Result, anyhow, bail, ensure};
     use regex_lite::Regex;
     use rustix::process::getuid;
     use std::fs::{File, OpenOptions};
@@ -115,12 +115,12 @@ mod android {
         use std::io::BufRead;
         // find a *.ko in /vendor/lib/modules
         let modfile = std::fs::read_dir("/vendor/lib/modules")?
-            .filter_map(Result::ok)
+            .filter_map(std::result::Result::ok)
             .find(|entry| entry.path().extension().is_some_and(|ext| ext == "ko"))
             .map(|entry| entry.path())
             .ok_or_else(|| anyhow!("No kernel module found"))?;
         let output = Command::new("modinfo").arg(modfile).output()?;
-        for line in output.stdout.lines().map_while(Result::ok) {
+        for line in output.stdout.lines().map_while(std::result::Result::ok) {
             if line.starts_with("vermagic") {
                 return parse_kmi(&line);
             }

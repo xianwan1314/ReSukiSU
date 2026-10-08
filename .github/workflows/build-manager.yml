@@ -119,11 +119,11 @@ jobs:
     secrets: inherit
 
   build-lkm-vivo:
-    needs: generate-key
+    needs: prepare
     uses: ./.github/workflows/build-lkm-vivo.yml
     with:
-      expected_size: ${{ needs.generate-key.outputs.expected_size || '' }}
-      expected_hash: ${{ needs.generate-key.outputs.expected_hash || '' }}
+      expected_size: ${{ needs.prepare.outputs.expected_size || '' }}
+      expected_hash: ${{ needs.prepare.outputs.expected_hash || '' }}
     secrets: inherit
 
   build-ksuinit:
