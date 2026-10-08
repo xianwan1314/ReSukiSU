@@ -10,7 +10,7 @@
     <string name="home_kernel">カーネル バージョン</string>
     <string name="home_susfs_version">SuSFS バージョン</string>
     <string name="home_manager_version">マネージャー バージョン</string>
-    <string name="home_selinux_status">SELinux のステータス</string>
+    <string name="home_selinux_status">SELinux の状態</string>
     <string name="selinux_status_disabled">無効</string>
     <string name="selinux_status_enforcing">Enforcing</string>
     <string name="selinux_status_permissive">Permissive</string>
@@ -113,7 +113,6 @@
     <string name="flashing">フラッシュ</string>
     <string name="flash_success">フラッシュが成功しました</string>
     <string name="flash_failed">フラッシュに失敗しました</string>
-    <string name="selected_lkm">選択された LKM: %s</string>
     <string name="save_log">ログを保存</string>
     <string name="log_saved">保存されたログ</string>
     <string name="unknown_module">不明なモジュール</string>
@@ -132,10 +131,10 @@
     <string name="home_android_version">Android バージョン</string>
     <string name="home_device_model">デバイスモデル</string>
     <string name="su_not_allowed">「%s」にスーパーユーザー権限を付与することはできません</string>
-    <string name="settings_sucompat">古典 su 命令</string>
-    <string name="settings_sucompat_summary">/system/bin/su 経由での 根源権限（特権）を 許可します（新規 手順/工程 のみ）</string>
-    <string name="settings_kernel_umount">module の umount</string>
-    <string name="settings_kernel_umount_summary">App Profile に基づき、kernel 側で module を umount します （あぷり ぷろふぁいる に もとづき、かーねる がわで もじゅーる を あんまうんと します）</string>
+    <string name="settings_sucompat">従来の su コマンド</string>
+    <string name="settings_sucompat_summary">新規プロセスにおいて、/system/bin/su を経由して root アクセスを許可します。</string>
+    <string name="settings_kernel_umount">モジュールのアンマウント（カーネルレベル）</string>
+    <string name="settings_kernel_umount_summary">アプリ プロファイルに基づいて、カーネルからモジュールをアンマウントします</string>
     <string name="feature_status_unsupported_summary">カーネルはこの機能に対応していません</string>
     <string name="feature_status_managed_summary">この機能はモジュールによって管理されています</string>
     <string name="settings_mode_default">デフォルト</string>
@@ -200,12 +199,6 @@
     <string name="kernel_flashing">カーネルをフラッシュ中</string>
     <string name="warning_of_meta_module_title">メタモジュールが必要です</string>
     <string name="warning_of_meta_module_summary">このモジュールは /system をマウントしようとしますが、メタモジュールがそれを処理します。そうでなければ動作しない可能性があります</string>
-    <string name="sort_name_asc">名前の昇順</string>
-    <string name="sort_name_desc">名前の降順</string>
-    <string name="sort_install_time_new">インストール日時 (新しい)</string>
-    <string name="sort_install_time_old">インストール日時 (古い)</string>
-    <string name="sort_size_desc">サイズの降順</string>
-    <string name="sort_size_asc">サイズの昇順</string>
     <string name="sort_usage_freq">使用頻度</string>
     <string name="no_apps_in_category">このカテゴリーにアプリはありません</string>
     <string name="susfs_config_title">SuSFS の構成</string>
@@ -266,4 +259,20 @@
     <string name="confirm_delete">構成を削除</string>
     <string name="operation_failed">操作が失敗しました</string>
     <string name="group_contains_apps">%d 個のアプリが含まれています</string>
+    <string name="home_seccomp_status">Seccomp のステータス</string>
+    <string name="seccomp_status_not_supported">Not supported</string>
+    <string name="seccomp_status_disabled">Disabled</string>
+    <string name="seccomp_status_strict">Strict</string>
+    <string name="seccomp_status_filter">Filter</string>
+    <string name="seccomp_status_unknown">Unknown</string>
+    <string name="sulog">SU ログ</string>
+    <string name="sulog_log_files">ログファイル</string>
+    <string name="sulog_failed_to_load">SU ログの読み込みに失敗しました</string>
+    <string name="sulog_disabled_title">SU ログは有効になっていません</string>
+    <string name="sulog_unsupported_title">SU ログはサポートされていません</string>
+    <string name="sulog_enable_action">有効化</string>
+    <string name="sulog_filter_title">種類で絞り込む</string>
+    <string name="sulog_clean_title">ログを消去</string>
+    <string name="sulog_filter_ioctl_grant_root">Root権限の付与</string>
+    <string name="sulog_filter_daemon_restart">デーモンの再起動</string>
 </resources>

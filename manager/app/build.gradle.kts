@@ -19,6 +19,8 @@ val androidSourceCompatibility = rootProject.extra["androidSourceCompatibility"]
 val androidTargetCompatibility = rootProject.extra["androidTargetCompatibility"] as JavaVersion
 val managerVersionCode = rootProject.extra["managerVersionCode"] as Int
 val managerVersionName = rootProject.extra["managerVersionName"] as String
+val managerPackageName = rootProject.extra["managerPackageName"] as String
+val managerName = rootProject.extra["managerName"] as String
 
 apksign {
     storeFileProperty = "KEYSTORE_FILE"
@@ -30,7 +32,7 @@ apksign {
 val baseCFlags = listOf(
     "-Wall", "-Qunused-arguments", "-fvisibility=hidden", "-fvisibility-inlines-hidden",
     "-fno-exceptions", "-fno-stack-protector", "-fomit-frame-pointer",
-    "-Wno-builtin-macro-redefined", "-Wno-unused-value", "-D__FILE__=__FILE_NAME__"
+    "-Wno-builtin-macro-redefined", "-Wno-unused-value", "-D__FILE__=__FILE_NAME__",
 )
 val baseCppFlags = baseCFlags + "-fno-rtti"
 
@@ -38,7 +40,7 @@ val isReleaseTask =
     project.gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
 
 android {
-    namespace = "com.resukisu.resukisu"
+    namespace = "org.bakasu.bakasu"
 
     buildTypes {
         debug {
@@ -59,8 +61,13 @@ android {
                     arguments += "-DCMAKE_BUILD_TYPE=Release"
 
                     val releaseFlags = listOf(
-                        "-flto", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                        "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-Wl,--exclude-libs,ALL"
+                        "-flto",
+                        "-ffunction-sections",
+                        "-fdata-sections",
+                        "-Wl,--gc-sections",
+                        "-fno-unwind-tables",
+                        "-fno-asynchronous-unwind-tables",
+                        "-Wl,--exclude-libs,ALL",
                     )
                     val configFlags = listOf("-Oz", "-DNDEBUG").joinToString(" ")
 
@@ -70,7 +77,7 @@ android {
                     arguments += listOf(
                         "-DCMAKE_CXX_FLAGS_RELEASE=$configFlags",
                         "-DCMAKE_C_FLAGS_RELEASE=$configFlags",
-                        "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--gc-sections -Wl,--exclude-libs,ALL -Wl,--icf=all -s -Wl,--hash-style=sysv -Wl,-z,norelro"
+                        "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--gc-sections -Wl,--exclude-libs,ALL -Wl,--icf=all -s -Wl,--hash-style=sysv -Wl,-z,norelro",
                     )
                 }
             }
@@ -80,6 +87,7 @@ android {
     buildFeatures {
         aidl = true
         buildConfig = true
+        resValues = true
         compose = true
         prefab = true
     }
@@ -89,9 +97,11 @@ android {
             useLegacyPackaging = true
         }
         resources {
-            // https://stackoverflow.com/a/58956288
-            // It will break Layout Inspector, but it's unused for release build.
-            excludes += "META-INF/*.version"
+            if (isReleaseTask) {
+                // https://stackoverflow.com/a/58956288
+                // It will break Layout Inspector, but it's unused for release build.
+                excludes += "META-INF/*.version"
+            }
             // https://github.com/Kotlin/kotlinx.coroutines?tab=readme-ov-file#avoiding-including-the-debug-infrastructure-in-the-resulting-apk
             excludes += "DebugProbesKt.bin"
             // https://issueantenna.com/repo/kotlin/kotlinx.coroutines/issues/3158
@@ -123,9 +133,11 @@ android {
         targetSdk = androidTargetSdkVersion
         versionCode = managerVersionCode
         versionName = managerVersionName
+        applicationId = managerPackageName
 
-        val isPrBuild = project.findProperty("IS_PR_BUILD")?.toString()?.toBoolean() ?: false
+        val isPrBuild = rootProject.extra["isPrBuild"] as Boolean
         buildConfigField("boolean", "IS_PR_BUILD", isPrBuild.toString())
+        resValue("string", "app_name", managerName)
 
         externalNativeBuild {
             cmake {
@@ -136,7 +148,7 @@ android {
         }
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64", "armeabi-v7a")
+            abiFilters += listOf("arm64-v8a", "x86_64", "armeabi-v7a", "riscv64")
         }
     }
 
@@ -144,7 +156,7 @@ android {
         abi {
             isEnable = isReleaseTask
             reset()
-            include("arm64-v8a", "x86_64", "armeabi-v7a")
+            include("arm64-v8a", "x86_64", "armeabi-v7a", "riscv64")
             isUniversalApk = true
         }
     }
@@ -168,12 +180,8 @@ baselineProfile {
 
 base {
     archivesName.set(
-        "ReSukiSU_${managerVersionName}_${managerVersionCode}"
+        "BakaSU_${managerVersionName}_$managerVersionCode",
     )
-}
-
-configurations.all {
-    exclude(group = "androidx.navigationevent", module = "navigationevent-compose")
 }
 
 aboutLibraries {
@@ -196,6 +204,8 @@ dependencies {
     implementation(libs.koin.compose.viewmodel)
 
     implementation(libs.gson)
+    implementation(libs.commons.compress)
+    implementation(libs.xz)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.profileinstaller)
@@ -217,14 +227,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.lifecycle.viewmodel.navigation3)
 
-    implementation(libs.androidx.navigation3.runtime)
     implementation(libs.miuix.blur)
-    implementation(libs.miuix.navigation)
-    implementation(libs.androidx.navigationevent) {
-        exclude(group = "androidx.navigation", module = "navigationevent-compose")
-    }
+    implementation(libs.miuix.nav)
 
     implementation(libs.aboutlibraries.core)
     implementation(libs.aboutlibraries.compose.m3)
@@ -254,8 +259,6 @@ dependencies {
     implementation(libs.androidx.webkit)
 
     implementation(libs.lsposed.cxx)
-
-    implementation(libs.com.github.topjohnwu.libsu.core)
 
     implementation(libs.accompanist.drawablepainter)
 }

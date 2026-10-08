@@ -127,6 +127,9 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
+      - name: Check Manager Format
+        run: ./gradlew spotlessCheck --no-configuration-cache
+
       - name: Check Manager Lint
         run: |
           ./gradlew lintDebug

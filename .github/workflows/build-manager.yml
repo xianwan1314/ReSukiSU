@@ -9,6 +9,8 @@ on:
       - '.github/workflows/build-lkm-vivo.yml'
       - '.github/workflows/ddk-lkm.yml'
       - '.github/workflows/ksud.yml'
+      - '.github/workflows/ksuinit.yml'
+      - '.github/riscv64-cargo.toml'
       - 'manager/**'
       - 'kernel/**'
       - 'userspace/**'
@@ -17,7 +19,7 @@ on:
   workflow_call:
 
 jobs:
-  generate-key:
+  prepare:
     runs-on: ubuntu-latest
     outputs:
       expected_size: ${{ steps.extract.outputs.expected_size }}
@@ -25,6 +27,7 @@ jobs:
       keystore: ${{ steps.gen.outputs.keystore }}
       keystore_password: ${{ steps.gen.outputs.keystore_password }}
       key_password: ${{ steps.gen.outputs.key_password }}
+      spoofed_package_name: ${{ steps.pkg.outputs.spoofed_package_name }}
     steps:
       - name: Generate temporary keystore
         if: github.event_name == 'pull_request'
@@ -98,12 +101,21 @@ jobs:
           echo "Certificate size: $SIZE_HEX ($SIZE_DEC bytes)"
           echo "Certificate hash: $HASH"
 
+      - name: Generate package name for spoofed manager
+        id: pkg
+        run: |
+          word1=$(tr -dc 'a-z' </dev/urandom | head -c6)
+          word2=$(tr -dc 'a-z' </dev/urandom | head -c6)
+          word3=$(tr -dc 'a-z' </dev/urandom | head -c6)
+          SPOOFED_PACKAGE_NAME="${word1}.${word2}.${word3}"
+          echo "spoofed_package_name=$SPOOFED_PACKAGE_NAME" >> $GITHUB_OUTPUT
+
   build-lkm:
-    needs: generate-key
+    needs: prepare
     uses: ./.github/workflows/build-lkm.yml
     with:
-      expected_pr_build_size: ${{ needs.generate-key.outputs.expected_size || '' }}
-      expected_pr_build_hash: ${{ needs.generate-key.outputs.expected_hash || '' }}
+      expected_pr_build_size: ${{ needs.prepare.outputs.expected_size || '' }}
+      expected_pr_build_hash: ${{ needs.prepare.outputs.expected_hash || '' }}
     secrets: inherit
 
   build-lkm-vivo:
@@ -121,22 +133,21 @@ jobs:
     needs: [build-lkm, build-lkm-vivo, build-ksuinit]
     strategy:
       matrix:
-        include:
-          - target: aarch64-linux-android
-            os: ubuntu-latest
-          - target: x86_64-linux-android
-            os: ubuntu-latest
-          - target: armv7-linux-androideabi
-            os: ubuntu-latest
+        target:
+          - aarch64-linux-android
+          - x86_64-linux-android
+          - armv7-linux-androideabi
+          - riscv64-linux-android
+        os: [ubuntu-latest]
     uses: ./.github/workflows/ksud.yml
     with:
       target: ${{ matrix.target }}
       os: ${{ matrix.os }}
 
   build-manager:
-    needs: [generate-key]
+    needs: [prepare]
     runs-on: ubuntu-latest
-    if: always() && needs.generate-key.result == 'success'
+    if: always() && needs.prepare.result == 'success'
     strategy:
       fail-fast: false
       matrix:
@@ -176,12 +187,6 @@ jobs:
             echo "title=Manager" >> $GITHUB_OUTPUT
           fi
 
-      - name: Run randomizer
-        if: ${{ matrix.manager_type == 'spoofed' }}
-        run: |
-          chmod +x randomizer
-          ./randomizer
-
       - name: Write key
         if: ${{ github.event_name == 'workflow_dispatch' || ( github.event_name != 'pull_request') || github.ref_type == 'tag' }}
         run: |
@@ -198,9 +203,9 @@ jobs:
       - name: Write PR key
         if: github.event_name == 'pull_request'
         env:
-          PR_KEYSTORE: ${{ needs.generate-key.outputs.keystore }}
-          PR_KEYSTORE_PASSWORD: ${{ needs.generate-key.outputs.keystore_password }}
-          PR_KEY_PASSWORD: ${{ needs.generate-key.outputs.key_password }}
+          PR_KEYSTORE: ${{ needs.prepare.outputs.keystore }}
+          PR_KEYSTORE_PASSWORD: ${{ needs.prepare.outputs.keystore_password }}
+          PR_KEY_PASSWORD: ${{ needs.prepare.outputs.key_password }}
         run: |
           echo "$PR_KEYSTORE" | base64 -d > pr-key.jks
           {
@@ -219,15 +224,25 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-
       - name: Build APK
         run: |
+          export BUILD_EXTRA_ARGS=""
+          if [ "${{ matrix.manager_type }}" == "spoofed" ]; then
+            export KSU_PACKAGE_NAME="${{ needs.prepare.outputs.spoofed_package_name }}"
+            export BUILD_EXTRA_ARGS="-PKSU_PACKAGE_NAME=$KSU_PACKAGE_NAME -PIS_SPOOFED_BUILD=true"
+          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+            export KSU_PACKAGE_NAME="com.resukisu.resukisu.pr${{github.event.pull_request.number}}"
+            export BUILD_EXTRA_ARGS="-PKSU_PACKAGE_NAME=$KSU_PACKAGE_NAME"
+          elif [ "${{ github.ref_type }}" != "tag" ] && [ "${{ github.ref_name }}" != "main" ]; then
+            export KSU_PACKAGE_NAME="com.resukisu.resukisu.dev"
+            export KSU_NAME="BakaSU-DEV"
+            export BUILD_EXTRA_ARGS="-PKSU_PACKAGE_NAME=$KSU_PACKAGE_NAME -PKSU_NAME=$KSU_NAME"
+          fi
+
           if [ "${{ github.event_name }}" == "pull_request" ]; then
-            ./gradlew assemble${{ matrix.build_type }} -Pcommit=${{ steps.commit.outputs.COMMIT_SHA }} -PIS_PR_BUILD=true
+            ./gradlew assemble${{ matrix.build_type }} -Pcommit=${{ steps.commit.outputs.COMMIT_SHA }} -PIS_PR_BUILD=true $BUILD_EXTRA_ARGS
           else
-            ./gradlew assemble${{ matrix.build_type }} -Pcommit=${{ steps.commit.outputs.COMMIT_SHA }}
+            ./gradlew assemble${{ matrix.build_type }} -Pcommit=${{ steps.commit.outputs.COMMIT_SHA }} $BUILD_EXTRA_ARGS
           fi
 
       - name: Upload artifact
@@ -247,7 +262,7 @@ jobs:
 
   repack-manager:
     if: always() && needs.build-manager.result == 'success' && needs.build-ksud.result == 'success'
-    needs: [build-manager, build-ksud, generate-key]
+    needs: [build-manager, build-ksud, prepare]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -298,6 +313,13 @@ jobs:
           name: ksud-armv7-linux-androideabi
           path: artifacts/ksud-armv7-linux-androideabi
 
+      - name: Download RISC-V ksud
+        uses: actions/download-artifact@v8
+        with:
+          name: ksud-riscv64-linux-android
+          path: artifacts/ksud-riscv64-linux-android
+
+
       - name: Place manager apk and ksud artifacts
         run: |
           mkdir -p manager/app/build/outputs/apk/${{ matrix.build_type }}
@@ -309,21 +331,25 @@ jobs:
           mkdir -p target/aarch64-linux-android/release
           mkdir -p target/armv7-linux-androideabi/release
           mkdir -p target/x86_64-linux-android/release
+          mkdir -p target/riscv64-linux-android/release
           ARM64_KSUD=$(find artifacts/ksud-aarch64-linux-android -type f -name ksud | head -n 1)
           ARMV7_KSUD=$(find artifacts/ksud-armv7-linux-androideabi -type f -name ksud | head -n 1)
           X86_64_KSUD=$(find artifacts/ksud-x86_64-linux-android -type f -name ksud | head -n 1)
+          RISCV64_KSUD=$(find artifacts/ksud-riscv64-linux-android -type f -name ksud | head -n 1)
           test -n "$ARM64_KSUD"
           test -n "$ARMV7_KSUD"
           test -n "$X86_64_KSUD"
+          test -n "$RISCV64_KSUD"
           cp -f "$ARM64_KSUD" target/aarch64-linux-android/release/ksud
           cp -f "$ARMV7_KSUD" target/armv7-linux-androideabi/release/ksud
           cp -f "$X86_64_KSUD" target/x86_64-linux-android/release/ksud
+          cp -f "$RISCV64_KSUD" target/riscv64-linux-android/release/ksud
 
       - name: Prepare signing inputs
         env:
-          PR_KEYSTORE: ${{ needs.generate-key.outputs.keystore }}
-          PR_KEYSTORE_PASSWORD: ${{ needs.generate-key.outputs.keystore_password }}
-          PR_KEY_PASSWORD: ${{ needs.generate-key.outputs.key_password }}
+          PR_KEYSTORE: ${{ needs.prepare.outputs.keystore }}
+          PR_KEYSTORE_PASSWORD: ${{ needs.prepare.outputs.keystore_password }}
+          PR_KEY_PASSWORD: ${{ needs.prepare.outputs.key_password }}
           PROD_KEYSTORE: ${{ secrets.KEYSTORE }}
           PROD_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           PROD_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -352,6 +378,7 @@ jobs:
             -a arm64-v8a \
             -a armeabi-v7a \
             -a x86_64 \
+            -a riscv64 \
             -K "$SIGN_KEYSTORE_FILE" \
             -A "$SIGN_KEY_ALIAS" \
             -P "$SIGN_KEYSTORE_PASSWORD" \
@@ -369,8 +396,45 @@ jobs:
           name: ${{ steps.determine.outputs.title }}-${{ matrix.build_type }}
           path: dist/*.apk
 
+  telegram-bot-api:
+    name: Telegram Bot API
+    if: github.event_name != 'pull_request' && github.event_name != 'workflow_call'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Clone Telegram Bot API
+        run: |
+          git clone --recursive https://github.com/tdlib/telegram-bot-api.git
+          git status telegram-bot-api >> telegram-bot-api-status
+      - name: Cache Bot API Binary
+        id: cache-bot-api
+        uses: actions/cache@v6.1.0
+        with:
+          path: telegram-bot-api-binary
+          key: CI-telegram-bot-api-${{ hashFiles('telegram-bot-api-status') }}
+      - name: Compile Telegram Bot API
+        if: steps.cache-bot-api.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install make git zlib1g-dev libssl-dev gperf cmake g++
+          cd telegram-bot-api
+          rm -rf build
+          mkdir build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=.. ..
+          cmake --build . --target install -j$(nproc)
+          cd ../..
+          ls -l telegram-bot-api/bin/telegram-bot-api*
+          cp telegram-bot-api/bin/telegram-bot-api telegram-bot-api-binary
+      - name: Upload Binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: telegram-bot-api-binary
+          path: telegram-bot-api-binary
+
   upload-telegram:
-    needs: repack-manager
+    needs: [repack-manager, telegram-bot-api]
     if: github.event_name != 'pull_request' && github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
     strategy:
@@ -411,6 +475,12 @@ jobs:
           name: ${{ steps.determine.outputs.title }}-release
           path: ./apk/release
 
+      - name: Download Telegram Bot API Binary
+        uses: actions/download-artifact@v8
+        with:
+          name: telegram-bot-api-binary
+          path: .
+
       - name: Upload to Telegram
         if: steps.need_upload.outputs.UPLOAD == 'true'
         env:
@@ -425,4 +495,5 @@ jobs:
           pip3 install python-telegram-bot
           export VERSION=$(git rev-list --count HEAD)
           APK_RELEASE=apk/release/*.apk
+          chmod +x telegram-bot-api-binary
           python3 $GITHUB_WORKSPACE/scripts/ksubot.py $APK_RELEASE

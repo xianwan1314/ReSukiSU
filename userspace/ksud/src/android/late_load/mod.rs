@@ -1,6 +1,6 @@
 pub mod magica;
 
-use std::process::Command;
+use std::{process::Command, time::Instant};
 
 use anyhow::{Context, Result};
 use log::{info, warn};
@@ -9,7 +9,7 @@ use rustix::cstr;
 use crate::{
     android::{
         dynamic_manager, init_event,
-        module::{handle_updated_modules, metamodule, prune_modules},
+        module::{ScriptWait, handle_updated_modules, metamodule, prune_modules},
         restorecon, utils,
     },
     assets, defs,
@@ -77,6 +77,7 @@ pub fn run(package_name: &String, kmi: Option<String>, allow_shell: bool) -> Res
 
         // 4. Load kernelsu.ko from memory with manual relocation
         info!("Loading primary module {} for KMI {kmi}...", ko_name);
+        // bundled flag is meaningless in jailbreak mode since we can't flash boot to update it.
         let params = if allow_shell {
             cstr!("allow_shell=1")
         } else {
@@ -105,7 +106,7 @@ pub fn run(package_name: &String, kmi: Option<String>, allow_shell: bool) -> Res
         warn!("clear temp configs failed: {e}");
     }
 
-    utils::install(None).context("Failed to install ksud")?;
+    utils::install(None, None).context("Failed to install ksud")?;
 
     // 5. Handle module updates
     if let Err(e) = handle_updated_modules() {
@@ -134,8 +135,9 @@ pub fn run(package_name: &String, kmi: Option<String>, allow_shell: bool) -> Res
         warn!("init features failed: {e}");
     }
 
-    // 8. Execute late-load stage scripts (blocking)
-    init_event::run_stage("late-load", true);
+    // 8. Execute late-load stage scripts with a shared boot deadline
+    let wait = ScriptWait::Until(Instant::now() + defs::BOOT_STAGE_TIMEOUT);
+    init_event::run_stage("late-load", wait);
 
     // 9. Load system.prop
     if let Err(e) = crate::android::module::load_system_prop() {
@@ -152,13 +154,13 @@ pub fn run(package_name: &String, kmi: Option<String>, allow_shell: bool) -> Res
     }
 
     // 12. Execute post-mount stage scripts (blocking)
-    init_event::run_stage("post-mount", true);
+    init_event::run_stage("post-mount", wait);
 
     // 13. Execute service stage scripts (non-blocking)
-    init_event::run_stage("service", false);
+    init_event::run_stage("service", ScriptWait::NoWait);
 
     // 14. Execute boot-completed stage scripts (non-blocking)
-    init_event::run_stage("boot-completed", false);
+    init_event::run_stage("boot-completed", ScriptWait::NoWait);
 
     // 15. Restart Manager so it gets a fresh ksu fd from the newly loaded kernel module
     info!("Restarting KernelSU Manager {package_name}...");

@@ -44,9 +44,6 @@ fn valid_block_modules(modules: &str) -> bool {
 
 #[cfg(target_os = "android")]
 mod android {
-    use super::Result;
-    pub(super) use crate::defs::{BACKUP_FILENAME, KSU_BACKUP_DIR, KSU_BACKUP_FILE_PREFIX};
-    use crate::defs::{DEFAULT_PACKAGE_NAME, KSU_TEMP_BACKUP_DIR_NAME};
     use android_bootimg::cpio::{Cpio, CpioEntry};
     use anyhow::{Context, anyhow, bail, ensure};
     use regex_lite::Regex;
@@ -63,6 +60,10 @@ mod android {
         BOOT_PARTITION_VENDOR_BOOT,
     };
     use crate::android::utils;
+    pub(super) use crate::defs::{
+        BACKUP_FILENAME, DEFAULT_PACKAGE_NAME, KSU_BACKUP_DIR, KSU_BACKUP_FILE_PREFIX,
+        KSU_TEMP_BACKUP_DIR_NAME,
+    };
 
     pub(super) fn ensure_gki_kernel() -> Result<()> {
         let version = get_kernel_version()?;
@@ -183,7 +184,6 @@ mod android {
         {
             return Ok((file, backup_file));
         }
-
         bail!("Both /data/adb/ksu and {backup_dir} are not accessible!")
     }
 
@@ -1210,9 +1210,12 @@ pub fn patch(args: BootPatchArgs) -> Result<()> {
             );
         }
 
+        // None means --no-install: preserve the marker for the existing LKM.
+        let bundled_lkm = (!no_install).then_some(kmod.is_none());
+
         let kmi = kmi.map_or_else(
             || -> Result<_> {
-                if kmod.is_some() {
+                if kmod.is_some() || (no_install && image.is_some()) {
                     return Ok(String::new());
                 }
                 #[cfg(target_os = "android")]
@@ -1270,10 +1273,13 @@ pub fn patch(args: BootPatchArgs) -> Result<()> {
 
         println!("- Parsing boot image");
         let boot_image_data = map_file(&boot_image_file)?;
-        let boot_image = if ramdisk {
-            BootImage::parse_raw_ramdisk(&boot_image_data)?
+        let boot_image = match if ramdisk {
+            BootImage::parse_raw_ramdisk(&boot_image_data)
         } else {
-            BootImage::parse(&boot_image_data)?
+            BootImage::parse(&boot_image_data)
+        } {
+            Ok(b) => b,
+            Err(e) => bail!("Failed to parse boot iamge, boot image maybe is empty, {e}"),
         };
         enforce_bootimage_version(&boot_image)?;
         ensure!(
@@ -1410,6 +1416,9 @@ pub fn patch(args: BootPatchArgs) -> Result<()> {
 
         apply_config("no custom rc", "norc=1", no_custom_rc);
         apply_config("allow shell", "allow_shell=1", allow_shell);
+        if let Some(bundled) = bundled_lkm {
+            apply_config("bundled LKM", "bundled=1", bundled);
+        }
 
         if ksu_config.is_empty() {
             cpio.rm("ksu_config", false);

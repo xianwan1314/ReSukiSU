@@ -1,8 +1,7 @@
 use std::{
     env,
     ffi::OsString,
-    fs::{self, File},
-    io::{self, Write},
+    fs, io,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -39,14 +38,20 @@ fn configure_bindgen() {
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         // The input header we would like to generate
         // bindings for.
         .header("src/android/uapi/ksu_uapi.h")
         .clang_args(["-x", "c++", "-I../../"])
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+    if env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("riscv64") {
+        // libc does not yet expose Android's RISC-V signal context. Generate
+        // it from the target NDK rather than assuming another libc's layout.
+        builder = builder.header_contents("ksu_signal_context.h", "#include <sys/ucontext.h>");
+    }
+    let bindings = builder
         // Finish the builder and generate the bindings.
         .generate()
         // Unwrap the Result and panic on failure.
@@ -238,6 +243,10 @@ fn build_mkbootfs(out_directory: &Path) {
             format!("x86_64-linux-android{API_LEVEL}"),
             Path::new("bin/x86_64"),
         ),
+        "riscv64-linux-android" => (
+            "riscv64-linux-android35".to_string(),
+            Path::new("bin/riscv"),
+        ),
         _ => panic!("mkbootfs is not configured for Android target {target}"),
     };
 
@@ -354,17 +363,14 @@ fn main() {
             (0, "0.0.0".to_string())
         }
     };
+
     let out_dir = env::var("OUT_DIR").expect("Failed to get $OUT_DIR");
     let out_dir = Path::new(&out_dir);
-    File::create(Path::new(out_dir).join("VERSION_CODE"))
-        .expect("Failed to create VERSION_CODE")
-        .write_all(code.to_string().as_bytes())
-        .expect("Failed to write VERSION_CODE");
-
-    File::create(Path::new(out_dir).join("VERSION_NAME"))
-        .expect("Failed to create VERSION_NAME")
-        .write_all(name.trim().as_bytes())
-        .expect("Failed to write VERSION_NAME");
+    if env::var("KSU_PACKAGE_NAME").is_err() {
+        println!("cargo:rustc-env=KSU_PACKAGE_NAME=com.resukisu.resukisu");
+    }
+    println!("cargo:rustc-env=VERSION_CODE={code}");
+    println!("cargo:rustc-env=VERSION_NAME={name}");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
     if target_os == "android" {
