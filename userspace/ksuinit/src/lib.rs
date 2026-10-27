@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use goblin::elf::{Elf, section_header, sym::Sym};
+use rustix::system::init_module;
 use scroll::{Pwrite, ctx::SizeWith};
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -7,7 +8,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, ErrorKind, Read, Seek, SeekFrom};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
-use syscalls::{Sysno, syscall};
 
 struct Kptr {
     value: String,
@@ -86,12 +86,24 @@ pub fn load_module(data: &[u8], params: &CStr) -> Result<()> {
     load_module_inner(data, "module", None, params)
 }
 
+pub fn load_module_with_resolver<F>(data: &[u8], params: &CStr, resolve: F) -> Result<()>
+where
+    F: FnOnce(&[&str]) -> Result<Vec<Option<u64>>>,
+{
+    load_module_inner_with_resolver(data, "module", None, params, resolve)
+}
+
 pub fn load_module_with_vermagic_fallback(
     data: &[u8],
     fallback_data: Option<&[u8]>,
     params: &CStr,
 ) -> Result<()> {
-    load_module_inner(data, "primary module", fallback_data.map(|data| (data, "fallback module")), params)
+    load_module_inner(
+        data,
+        "primary module",
+        fallback_data.map(|data| (data, "fallback module")),
+        params,
+    )
 }
 
 pub fn load_module_with_named_vermagic_fallback(
@@ -109,43 +121,39 @@ fn load_module_inner(
     fallback: Option<(&[u8], &str)>,
     params: &CStr,
 ) -> Result<()> {
+    load_module_inner_with_resolver(data, module_name, fallback, params, resolve_kallsyms)
+}
+
+fn load_module_inner_with_resolver<F>(
+    data: &[u8],
+    module_name: &str,
+    fallback: Option<(&[u8], &str)>,
+    params: &CStr,
+    resolve: F,
+) -> Result<()>
+where
+    F: FnOnce(&[&str]) -> Result<Vec<Option<u64>>>,
+{
     let mut buffer = data.to_vec();
-    let elf = Elf::parse(&buffer)?;
-    let ctx = *elf.syms.ctx();
-
-    let mut unresolved_symbols: HashMap<String, (Sym, usize)> = HashMap::new();
-    for (index, sym) in elf.syms.iter().enumerate() {
-        if index == 0 {
-            continue;
-        }
-
-        if sym.st_shndx != section_header::SHN_UNDEF as usize {
-            continue;
-        }
-
-        let Some(name) = elf.strtab.get_at(sym.st_name) else {
-            continue;
-        };
-
-        let offset = elf.syms.offset() + index * Sym::size_with(elf.syms.ctx());
-        unresolved_symbols.insert(name.to_owned(), (sym, offset));
-    }
+    let (unresolved_symbols, ctx) = undefined_symbols(&buffer)?;
 
     if !unresolved_symbols.is_empty() {
-        for_each_kernel_symbols(|(symbol, addr)| {
-            if let Some((mut sym, offset)) = unresolved_symbols.remove(symbol) {
-                sym.st_shndx = section_header::SHN_ABS as usize;
-                sym.st_value = *addr;
-                buffer.pwrite_with(sym, offset, ctx)?;
+        let names: Vec<&str> = unresolved_symbols.keys().map(String::as_str).collect();
+        let addrs = resolve(&names).context("Cannot resolve symbols")?;
+        if addrs.len() != names.len() {
+            bail!(
+                "Resolver returned {} addresses for {} symbols",
+                addrs.len(),
+                names.len()
+            );
+        }
+
+        for (name, addr) in names.iter().zip(addrs) {
+            match addr {
+                Some(addr) => bind_symbol(&mut buffer, unresolved_symbols[*name], addr, ctx)?,
+                None => log::warn!("Cannot find symbol: {}", name),
             }
-
-            Ok(!unresolved_symbols.is_empty())
-        })
-        .context("Cannot parse kallsyms")?;
-    }
-
-    for name in unresolved_symbols.keys() {
-        log::warn!("Cannot find symbol: {}", name);
+        }
     }
 
     let mut kmsg = match open_kmsg_at_end() {
@@ -161,7 +169,8 @@ fn load_module_inner(
         Err(first_error) => {
             log::warn!(
                 "init_module failed for {} on first attempt: {:?}",
-                module_name, first_error
+                module_name,
+                first_error
             );
 
             let logs = match kmsg.as_mut() {
@@ -179,19 +188,22 @@ fn load_module_inner(
 
             log::warn!(
                 "Kernel requires vermagic {:?} while loading {}",
-                required_vermagic, module_name
+                required_vermagic,
+                module_name
             );
 
             if let Some((fallback_data, fallback_name)) = fallback {
                 log::warn!(
                     "Version-magic mismatch for {}; switching to fallback {}",
-                    module_name, fallback_name
+                    module_name,
+                    fallback_name
                 );
                 load_module_inner(fallback_data, fallback_name, None, params)
                     .with_context(|| format!("Fallback module load failed for {fallback_name}"))?;
                 log::info!(
                     "Fallback module {} loaded successfully after {} vermagic mismatch",
-                    fallback_name, module_name
+                    fallback_name,
+                    module_name
                 );
                 return Ok(());
             }
@@ -215,16 +227,8 @@ fn load_module_inner(
     }
 }
 
-fn do_init_module(buffer: &[u8], params: &CStr) -> std::result::Result<(), syscalls::Errno> {
-    unsafe {
-        syscall!(
-            Sysno::init_module,
-            buffer.as_ptr(),
-            buffer.len(),
-            params.as_ptr()
-        )
-    }
-    .map(|_| ())
+fn do_init_module(buffer: &[u8], params: &CStr) -> Result<()> {
+    init_module(buffer, params).context("init_module syscall failed")
 }
 
 const O_NONBLOCK_FLAG: i32 = 0x800;
@@ -468,6 +472,69 @@ fn replace_module_vermagic(buffer: &mut Vec<u8>, required_vermagic: &str) -> Res
         required_vermagic
     );
     Ok(())
+}
+
+type UndefinedSymbols = HashMap<String, (Sym, usize)>;
+
+/// Collect undefined ELF symbols and their symbol-table offsets.
+fn undefined_symbols(buffer: &[u8]) -> Result<(UndefinedSymbols, goblin::container::Ctx)> {
+    let elf = Elf::parse(buffer)?;
+    let ctx = *elf.syms.ctx();
+
+    let mut unresolved_symbols = HashMap::new();
+    for (index, sym) in elf.syms.iter().enumerate() {
+        if index == 0 {
+            continue;
+        }
+
+        if sym.st_shndx != section_header::SHN_UNDEF as usize {
+            continue;
+        }
+
+        let Some(name) = elf.strtab.get_at(sym.st_name) else {
+            continue;
+        };
+
+        let offset = elf.syms.offset() + index * Sym::size_with(elf.syms.ctx());
+        unresolved_symbols.insert(name.to_owned(), (sym, offset));
+    }
+
+    Ok((unresolved_symbols, ctx))
+}
+
+fn bind_symbol(
+    buffer: &mut [u8],
+    (mut sym, offset): (Sym, usize),
+    addr: u64,
+    ctx: goblin::container::Ctx,
+) -> Result<()> {
+    sym.st_shndx = section_header::SHN_ABS as usize;
+    sym.st_value = addr;
+    buffer.pwrite_with(sym, offset, ctx)?;
+    Ok(())
+}
+
+/// Resolve names against /proc/kallsyms, using the first matching address.
+pub fn resolve_kallsyms(names: &[&str]) -> Result<Vec<Option<u64>>> {
+    let mut addrs = vec![None; names.len()];
+    let mut pending: HashMap<&str, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (*name, i))
+        .collect();
+
+    if !pending.is_empty() {
+        for_each_kernel_symbols(|(symbol, addr)| {
+            if let Some(i) = pending.remove(symbol.as_str()) {
+                addrs[i] = Some(*addr);
+            }
+
+            Ok(!pending.is_empty())
+        })
+        .context("Cannot parse kallsyms")?;
+    }
+
+    Ok(addrs)
 }
 
 fn has_kernelsu_legacy() -> bool {
